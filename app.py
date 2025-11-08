@@ -1,14 +1,15 @@
 # app.py
-# ===============================================
+# ======================================================
 # 🔢 Sistem Prediksi Angka — Fusion China & Jawa Calendar
-# Model Markov Orde-2 dengan integrasi Hari, Pasaran,
-# dan dukungan pembacaan File C (dua blok mingguan)
-# ===============================================
+# Mengambil data otomatis dari repository GitHub.
+# File C berformat dua blok (lokal + Data HK Lotto)
+# Model: Markov Orde-2 dengan kalender Jawa
+# ======================================================
 
 import streamlit as st
 import pandas as pd
 import numpy as np
-import io, re
+import re
 from datetime import datetime
 from collections import defaultdict, Counter
 
@@ -23,7 +24,7 @@ beam_width = st.sidebar.slider("Beam Width", 3, 50, 10)
 topk = st.sidebar.slider("Top-K Prediksi", 1, 10, 5)
 laplace_alpha = st.sidebar.number_input("Laplace α", 0.1, 5.0, 1.0, 0.1)
 
-# === KALENDER JAWA SEDERHANA ===
+# === KALENDER JAWA ===
 def hari_pasaran(date: datetime):
     hari_list = ["Senin","Selasa","Rabu","Kamis","Jumat","Sabtu","Minggu"]
     pasaran_list = ["Legi","Pahing","Pon","Wage","Kliwon"]
@@ -38,28 +39,43 @@ today = datetime.now()
 hari, pasaran, neptu = hari_pasaran(today)
 st.markdown(f"📅 **{hari} {pasaran}** (Neptu {neptu})")
 
-# === Fungsi bantu File C ===
-def process_file_c(uploaded_file):
-    """Membaca file C berformat dua blok mingguan (lokal & Data HK Lotto)."""
-    if uploaded_file is None:
-        return None, "Tidak ada file diunggah."
+# === URL DATA (ganti sesuai repo GitHub kamu) ===
+URL_A = "https://raw.githubusercontent.com/cklothoz79/main-angka/main/file_a.csv"
+URL_B = "https://raw.githubusercontent.com/cklothoz79/main-angka/main/file_b.csv"
+URL_C = "https://raw.githubusercontent.com/cklothoz79/main-angka/main/file_c.txt"
 
+# === Fungsi baca File A/B ===
+def load_csv_from_url(url):
     try:
-        text = uploaded_file.getvalue().decode("utf-8")
+        df = pd.read_csv(url)
+        if len(df) > 0:
+            return df
+    except:
+        pass
+    try:
+        df = pd.read_csv(url, sep="\t")
+        return df
+    except:
+        return None
+
+# === Fungsi baca File C ===
+def load_file_c_from_url(url):
+    try:
+        text = pd.read_csv(url, header=None).to_string(index=False)
     except Exception:
-        try:
-            text = uploaded_file.read().decode("utf-8")
-        except:
-            return None, "Gagal membaca file."
+        import requests
+        resp = requests.get(url)
+        if resp.status_code != 200:
+            return None, f"Gagal mengunduh File C dari {url}"
+        text = resp.text
 
     parts = re.split(r"Data\s+HK\s+Lotto", text, flags=re.IGNORECASE)
     if len(parts) < 2:
-        return None, "Format file tidak sesuai. Tidak ditemukan pemisah 'Data HK Lotto'."
+        return None, "Format File C tidak sesuai (tidak ditemukan 'Data HK Lotto')."
 
     def parse_block(block_text):
         block_text = block_text.strip()
         lines = [ln.strip() for ln in block_text.splitlines() if ln.strip()]
-        # buang baris header yang berawalan huruf
         lines = [ln for ln in lines if not re.match(r"^[A-Z]", ln)]
         data = []
         for ln in lines:
@@ -79,56 +95,35 @@ def process_file_c(uploaded_file):
     df_local = parse_block(parts[0])
     df_hk = parse_block(parts[1])
     df_all = pd.concat([df_local, df_hk], ignore_index=True)
-    return df_all, f"Berhasil membaca data: {len(df_all)} baris (lokal {len(df_local)}, HK {len(df_hk)})"
+    return df_all, f"Berhasil memuat File C: {len(df_all)} baris (lokal {len(df_local)}, HK {len(df_hk)})"
 
-# === Fungsi bantu umum (File A/B biasa) ===
-def load_csv(uploaded_file):
-    if uploaded_file is None:
-        return None
-    try:
-        df = pd.read_csv(uploaded_file)
-        return df
-    except Exception:
-        uploaded_file.seek(0)
-        try:
-            df = pd.read_csv(uploaded_file, sep="\t")
-            return df
-        except Exception:
-            return None
-
-# === UPLOAD FILE ===
-st.subheader("📘 File A")
-file_a = st.file_uploader("Unggah File A (.csv atau .tsv)", type=["csv","txt"])
-df_a = load_csv(file_a)
+# === LOAD SEMUA FILE ===
+st.subheader("📘 Data File A")
+df_a = load_csv_from_url(URL_A)
 if df_a is not None:
-    st.success(f"Data A berhasil dibaca ({len(df_a)} baris)")
+    st.success(f"File A berhasil dimuat ({len(df_a)} baris)")
 else:
-    st.info("Tidak ada file A valid.")
+    st.warning("Gagal memuat File A")
 
-st.subheader("📗 File B")
-file_b = st.file_uploader("Unggah File B (.csv atau .tsv)", type=["csv","txt"])
-df_b = load_csv(file_b)
+st.subheader("📗 Data File B")
+df_b = load_csv_from_url(URL_B)
 if df_b is not None:
-    st.success(f"Data B berhasil dibaca ({len(df_b)} baris)")
+    st.success(f"File B berhasil dimuat ({len(df_b)} baris)")
 else:
-    st.info("Tidak ada file B valid.")
+    st.warning("Gagal memuat File B")
 
-st.subheader("📙 File C")
-file_c = st.file_uploader("Unggah File C (format dua blok mingguan)", type=["txt","csv"])
-if file_c:
-    df_c, info_c = process_file_c(file_c)
-    if df_c is not None:
-        st.success(info_c)
-        st.dataframe(df_c.head())
-    else:
-        st.error(info_c)
+st.subheader("📙 Data File C")
+df_c, info_c = load_file_c_from_url(URL_C)
+if df_c is not None:
+    st.success(info_c)
+    st.dataframe(df_c.head())
 else:
-    st.info("Belum ada file C diunggah.")
+    st.error(info_c)
 
 # === GABUNGKAN SEMUA DATA ===
-data_sources = [d for d in [df_a, df_b, 'df_c' in locals() and df_c] if isinstance(d, pd.DataFrame)]
+data_sources = [d for d in [df_a, df_b, df_c] if isinstance(d, pd.DataFrame)]
 if not data_sources:
-    st.warning("Belum ada data valid dari file A/B/C.")
+    st.warning("Belum ada data valid dari File A/B/C.")
     st.stop()
 
 data_all = pd.concat(data_sources, ignore_index=True)
@@ -168,7 +163,7 @@ if flat_series:
         for p,v in preds:
             st.write(f"**...{p}** → Probabilitas ≈ {v:.2%}")
     else:
-        st.info("Model belum punya riwayat cukup untuk prediksi.")
+        st.info("Model belum punya cukup riwayat untuk prediksi.")
 else:
     st.info("Tidak ada data angka valid untuk model.")
 
